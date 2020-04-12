@@ -5,28 +5,49 @@ import base64
 import getpass
 import hashlib
 import os
+import pathlib
 
+PASSLE_HOME = "PASSLE_HOME"
+PASSLE_SITES_DIRECTORY_NAME = "sites"
+AVAILABLE_ENCODINGS = {"base32": base64.b32encode, "base64": base64.b64encode,
+                       "base85": base64.b85encode,
+                       "decimal": lambda b: str(int.from_bytes(b, endianness='big')),
+                       "hexadecimal": lambda b: base64.b16encode}
 
-def derive_pass(master, key):
+def derive_pass(master, key, encode=None, length=None):
     n = 16384 # n — CPU/memory cost factor
     r = 32 # r — block size
     p = 1 # p — paralellization factor
     maxmem = 128 * r * (n + p + 2)
-    dklen = 64
+    length = length or 512
+    encode = encode or base64.b64encode
     result = hashlib.scrypt(master.encode('utf-8'),
                             salt=key.encode('utf-8'),
                             n=n, r=r, p=p, maxmem=maxmem,
-                            dklen=dklen)
-    return base64.b64encode(result).decode('utf-8')
+                            dklen=length)
+    return encode(result).decode('utf-8')
 
 
-def store_directory():
-    # default, environment variable, etc.
-    pass
+def store_directory(store_directory=None):
+    store_directory = store_directory or os.environ.get(PASSLE_HOME) or os.path.join(pathlib.Path.home(), ".passle")
+    return valid_store_directory(store_directory)
+
+
+def valid_store_directory(prospective_dir, writable=False):
+    if os.path.isfile(prospective_dir):
+        raise FileExistsError("{0} is a file, not a directory".format(prospective_dir))
+    elif not os.path.isdir(prospective_dir):
+        os.makedirs(os.path.join(prospective_dir, PASSLE_SITES_DIRECTORY_NAME))
+    # is directory, now check permissions
+    if not os.access(prospective_dir, os.R_OK):
+        raise PermissionError("Need read permission on {}".format(prospective_dir))
+    if writable and not os.access(prospective_dir, os.W_OK):
+        raise PermissionError("Need write permission on {}".format(prospective_dir))
+    return prospective_dir
 
 
 def list_site_files(store_dir):
-    site_files_dir = os.path.join(store_dir, "sites")
+    site_files_dir = os.path.join(store_dir, PASSLE_SITES_DIRECTORY_NAME)
     for root, _, files in os.walk(site_files_dir, topdown=True):
         for f in files:
             yield (root, f)
@@ -40,26 +61,26 @@ def find_site_file(name, store_dir):
 
 
 def parse_site_file(name, store_dir=None):
-    store_dir = store_dir or store_directory()
+    store_dir = store_directory(store_dir)
     path = find_site_file(name, store_dir)
     with open(path, 'r') as f:
         key = f.readline().strip()
         if key:
-            return {'key': key}
+            parse_result = {'key': key}
+            for line in map(lambda s: s.strip(), f.readlines()):
+                if line:
+                    if line[0] == "#":
+                        continue
+                    key, value = line.split(sep=':', maxsplit=1)
+                    key = key.rstrip()
+                    value = value.lstrip()
+                    if not parse_result.get(key):
+                        parse_result[key] = value
+                    else:
+                        raise Exception("Duplicate key {} for {}".format(key, name))
+            return parse_result
         else:
             raise Exception("Key for {} may not empty".format(name))
-
-
-def directory(prospective_dir, writable=False):
-    if os.path.isfile(prospective_dir):
-        raise argparse.ArgumentTypeError("{0} is a file, not a directory".format(prospective_dir))
-    elif not os.path.isdir(prospective_dir):
-        raise argparse.ArgumentTypeError("{0} is not a directory".format(prospective_dir))
-    else: # is directory, now check permissions
-        if os.access(prospective_dir, os.R_OK) and not (writable and os.access(prospective_dir, os.W_OK)):
-            return prospective_dir
-        else:
-            raise argparse.ArgumentTypeError("{0} does not have the necessary permissions".format(prospective_dir))
 
 
 
@@ -71,9 +92,14 @@ parser.add_argument('-k', '--as-key', action='store_true',
                     help="treat TARGET as key, not as a site name")
 parser.add_argument('-c', '--clip', action='store_true',
                     help="copy password to clipboard instead of printing it")
-parser.add_argument('-s', '--store', type=directory,
-                    metavar="STORE_DIR",
+parser.add_argument('-s', '--store', metavar="STORE_DIR",
                     help="path to password store directory")
+parser.add_argument('-l', '--length', type=int,
+                    metavar="PASSWORD_LENGTH",
+                    help="length of password to produce")
+parser.add_argument('-e', '--encoding', metavar="ENCODING",
+                    choices=AVAILABLE_ENCODINGS.keys(),
+                    help="password encoding")
 parser.add_argument('target', metavar="TARGET",
                     help="target to produce password to")
 
@@ -83,11 +109,16 @@ if __name__ == '__main__':
     print(args)
     master = getpass.getpass(prompt="Master passphrase: ")
     if args.as_key:
-        key = args.target
+        parse_result = {"key": args.target}
     else:
-        # FIXME: this should also get configuration
-        key = parse_site_file(args.target, store_dir=args.store).get('key')
-    password = derive_pass(master, key)
+        parse_result = parse_site_file(args.target, store_dir=args.store)
+    key = parse_result.get('key')
+    length = args.length or int(parse_result.get('length'))
+    encode_name = args.encoding or parse_result.get('encoding')
+    encode = AVAILABLE_ENCODINGS.get(encode_name)
+    if not encode:
+        raise Exception("Could not find encoding for {}".format(encode_name))
+    password = derive_pass(master, key, length=length, encode=encode)
     if not args.clip:
         print(password)
     else:
