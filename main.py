@@ -7,11 +7,13 @@ import hashlib
 import os
 import pathlib
 
+SCRYPT_MAX_LENGTH=512
 PASSLE_HOME = "PASSLE_HOME"
 PASSLE_SITES_DIRECTORY_NAME = "sites"
+PASSLE_ENDIANNESS = 'big'
 AVAILABLE_ENCODINGS = {"base32": base64.b32encode, "base64": base64.b64encode,
                        "base85": base64.b85encode,
-                       "decimal": lambda b: str(int.from_bytes(b, endianness='big')),
+                       "decimal": lambda b: str(int.from_bytes(b, endianness=PASSLE_ENDIANNESS)),
                        "hexadecimal": lambda b: base64.b16encode}
 
 def derive_pass(master, key, encode=None, length=None):
@@ -24,8 +26,12 @@ def derive_pass(master, key, encode=None, length=None):
     result = hashlib.scrypt(master.encode('utf-8'),
                             salt=key.encode('utf-8'),
                             n=n, r=r, p=p, maxmem=maxmem,
-                            dklen=length)
-    return encode(result).decode('utf-8')
+                            dklen=SCRYPT_MAX_LENGTH)
+    encoded_result = encode(result).decode('utf-8')
+    if SCRYPT_MAX_LENGTH >= length:
+        return encoded_result[:length]
+    else:
+        raise Exception("Password can't have length {}".format(length))
 
 
 def store_directory(store_directory=None):
