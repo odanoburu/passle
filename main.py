@@ -6,6 +6,10 @@ import getpass
 import hashlib
 import os
 import pathlib
+import subprocess
+import sys
+import time
+
 
 SCRYPT_MAX_LENGTH=512
 PASSLE_HOME = "PASSLE_HOME"
@@ -15,6 +19,10 @@ AVAILABLE_ENCODINGS = {"base32": base64.b32encode, "base64": base64.b64encode,
                        "base85": base64.b85encode,
                        "decimal": lambda b: str(int.from_bytes(b, endianness=PASSLE_ENDIANNESS)),
                        "hexadecimal": lambda b: base64.b16encode}
+VERBOSITY = None
+
+def printinfo(*args, **kwargs):
+    print(*args, *kwargs, file=sys.stderr)
 
 def derive_pass(master, key, encode=None, length=None):
     n = 16384 # n — CPU/memory cost factor
@@ -69,6 +77,8 @@ def find_site_file(name, store_dir):
 def parse_site_file(name, store_dir=None):
     store_dir = store_directory(store_dir)
     path = find_site_file(name, store_dir)
+    if VERBOSITY:
+        printinfo("Reading site file for {} at {}".format(name, path))
     with open(path, 'r') as f:
         key = f.readline().strip()
         if key:
@@ -81,12 +91,25 @@ def parse_site_file(name, store_dir=None):
                     key = key.rstrip()
                     value = value.lstrip()
                     if not parse_result.get(key):
+                        if VERBOSITY:
+                            printinfo("read {} for {}".format(value, key))
                         parse_result[key] = value
                     else:
                         raise Exception("Duplicate key {} for {}".format(key, name))
             return parse_result
         else:
             raise Exception("Key for {} may not empty".format(name))
+
+
+##
+# copy-paste functionality
+def copy_nix(string):
+    _cmd = ["xclip", "-selection", "clipboard"]
+    def clear_clipboard():
+        subprocess.run(_cmd, check=True, input="".encode('ascii'))
+        return None
+    subprocess.run(_cmd, check=True, input=string.encode('utf-8'))
+    return clear_clipboard
 
 
 
@@ -96,8 +119,9 @@ def parse_site_file(name, store_dir=None):
 parser = argparse.ArgumentParser(description="Create a password.")
 parser.add_argument('-k', '--as-key', action='store_true',
                     help="treat TARGET as key, not as a site name")
-parser.add_argument('-c', '--clip', action='store_true',
-                    help="copy password to clipboard instead of printing it")
+parser.add_argument('-c', '--clip', nargs='?', type=int, metavar="TIMEOUT",
+                    const=30,
+                    help="copy password to clipboard instead of printing it\nclear clipboard and return after TIMEOUT (default: 30 seconds)")
 parser.add_argument('-s', '--store', metavar="STORE_DIR",
                     help="path to password store directory")
 parser.add_argument('-l', '--length', type=int,
@@ -106,13 +130,16 @@ parser.add_argument('-l', '--length', type=int,
 parser.add_argument('-e', '--encoding', metavar="ENCODING",
                     choices=AVAILABLE_ENCODINGS.keys(),
                     help="password encoding")
+parser.add_argument('-v', '--verbose', action='store_true')
 parser.add_argument('target', metavar="TARGET",
                     help="target to produce password to")
 
 
 if __name__ == '__main__':
     args = parser.parse_args()
-    print(args)
+    VERBOSITY = args.verbose
+    if VERBOSITY:
+        printinfo("CLI options:", args)
     master = getpass.getpass(prompt="Master passphrase: ")
     if args.as_key:
         parse_result = {"key": args.target}
@@ -128,7 +155,19 @@ if __name__ == '__main__':
     if not args.clip:
         print(password)
     else:
-        pass
+        clear = lambda: None
+        # platform-dependent copy and clearing code
+        if sys.platform == 'win32':
+            raise NotImplementedError("Copy to and clear clipboard not implemented for Windows. Patches welcome")
+        elif sys.platform == 'darwin':
+            raise NotImplementedError("Copy to and clear clipboard not implemented for MacOSX. Patches welcome")
+        else:
+            clear = copy_nix(password)
+        # clear clipboard after time
+        try:
+            time.sleep(args.clip or 30)
+        finally:
+            clear()
 
 
 # Local Variables:
