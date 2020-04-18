@@ -6,19 +6,22 @@ import getpass
 import hashlib
 import os
 import pathlib
+import readline
 import subprocess
 import sys
 import time
 
 
-SCRYPT_MAX_LENGTH=512
-PASSLE_HOME = "PASSLE_HOME"
-PASSLE_SITES_DIRECTORY_NAME = "sites"
-PASSLE_ENDIANNESS = 'big'
 AVAILABLE_ENCODINGS = {"base32": base64.b32encode, "base64": base64.b64encode,
                        "base85": base64.b85encode,
                        "decimal": lambda b: str(int.from_bytes(b, endianness=PASSLE_ENDIANNESS)),
                        "hexadecimal": lambda b: base64.b16encode}
+AVAILABLE_ENCODINGS_AS_STRING = ", ".join(AVAILABLE_ENCODINGS.keys())
+DEFAULT_CLIPBOARD_TIMEOUT = 30
+PASSLE_ENDIANNESS = 'big'
+PASSLE_HOME = "PASSLE_HOME"
+PASSLE_SITES_DIRECTORY_NAME = "sites"
+SCRYPT_MAX_LENGTH = 512
 VERBOSITY = None
 
 def printinfo(*args, **kwargs):
@@ -67,6 +70,13 @@ def list_site_files(store_dir):
             yield (root, f)
 
 
+def passle_ls(args):
+    # FIXME: tree structure, have extension?
+    store_dir = store_directory(args.store)
+    for _, f in list_site_files(store_dir):
+        print("- {}".format(f))
+
+
 def find_site_file(name, store_dir):
     for d, f in list_site_files(store_dir):
         if f == name:
@@ -101,45 +111,7 @@ def parse_site_file(name, store_dir=None):
             raise Exception("Key for {} may not empty".format(name))
 
 
-##
-# copy-paste functionality
-def copy_nix(string):
-    _cmd = ["xclip", "-selection", "clipboard"]
-    def clear_clipboard():
-        subprocess.run(_cmd, check=True, input="".encode('ascii'))
-        return None
-    subprocess.run(_cmd, check=True, input=string.encode('utf-8'))
-    return clear_clipboard
-
-
-
-##
-# CLI
-
-parser = argparse.ArgumentParser(description="Create a password.")
-parser.add_argument('-k', '--as-key', action='store_true',
-                    help="treat TARGET as key, not as a site name")
-parser.add_argument('-c', '--clip', nargs='?', type=int, metavar="TIMEOUT",
-                    const=30,
-                    help="copy password to clipboard instead of printing it\nclear clipboard and return after TIMEOUT (default: 30 seconds)")
-parser.add_argument('-s', '--store', metavar="STORE_DIR",
-                    help="path to password store directory")
-parser.add_argument('-l', '--length', type=int,
-                    metavar="PASSWORD_LENGTH",
-                    help="length of password to produce")
-parser.add_argument('-e', '--encoding', metavar="ENCODING",
-                    choices=AVAILABLE_ENCODINGS.keys(),
-                    help="password encoding")
-parser.add_argument('-v', '--verbose', action='store_true')
-parser.add_argument('target', metavar="TARGET",
-                    help="target to produce password to")
-
-
-if __name__ == '__main__':
-    args = parser.parse_args()
-    VERBOSITY = args.verbose
-    if VERBOSITY:
-        printinfo("CLI options:", args)
+def passle_word(args):
     master = getpass.getpass(prompt="Master passphrase: ")
     if args.as_key:
         parse_result = {"key": args.target}
@@ -168,6 +140,119 @@ if __name__ == '__main__':
             time.sleep(args.clip or 30)
         finally:
             clear()
+    return None
+
+
+def validate(p, t, msg):
+    if p(t):
+        return t
+    else:
+        raise Exception(msg)
+
+
+def passle_add(args):
+    if args.key:
+        key = args.key
+    else:
+        key = args.target
+    store = store_directory(args.store)
+    length = args.length or validate(int, input("Password length: "), "Password length must be integer")
+    encoding_name = args.encoding or input("Password encoding: ").strip()
+    encoding = validate(AVAILABLE_ENCODINGS.get, encoding_name, "Can't read password encoding {}, must be one of: {}".format(encoding_name, AVAILABLE_ENCODINGS_AS_STRING))
+    return None
+
+##
+# copy-paste functionality
+def copy_nix(string):
+    _cmd = ["xclip", "-selection", "clipboard"]
+    def clear_clipboard():
+        subprocess.run(_cmd, check=True, input="".encode('ascii'))
+        return None
+    subprocess.run(_cmd, check=True, input=string.encode('utf-8'))
+    return clear_clipboard
+
+
+
+##
+# CLI
+parser = argparse.ArgumentParser(description="Hassle-free password-management.")
+subparsers = parser.add_subparsers()
+parser_word = subparsers.add_parser('word', help="Generate password")
+parser_ls = subparsers.add_parser('ls', help="List available password sites")
+parser_add = subparsers.add_parser('add', help="Add new password site")
+
+def add_store_option(parser):
+    parser.add_argument('-s', '--store', metavar="STORE_DIR",
+                        help="path to password store directory")
+    return None
+
+
+def add_verbose_option(parser):
+    parser.add_argument('-v', '--verbose', action='store_true')
+    return None
+
+
+def add_length_option(parser):
+    parser.add_argument('-l', '--length', type=int,
+                        metavar="PASSWORD_LENGTH",
+                        help="length of password to produce")
+    return None
+
+
+def add_encoding_option(parser):
+    parser.add_argument('-e', '--encoding', metavar="ENCODING",
+                        choices=AVAILABLE_ENCODINGS.keys(),
+                        help="Password encoding, one of: {}".format(
+                            AVAILABLE_ENCODINGS_AS_STRING))
+    return None
+
+
+def add_target_argument(parser):
+    parser.add_argument('target', metavar="TARGET",
+                        help="target name to produce password to")
+    return None
+
+# word
+add_store_option(parser_word)
+add_verbose_option(parser_word)
+parser_word.add_argument('-k', '--as-key', action='store_true',
+                         help="treat TARGET as key, not as a site name")
+parser_word.add_argument('-c', '--clip', nargs='?', type=int, metavar="TIMEOUT",
+                         const=DEFAULT_CLIPBOARD_TIMEOUT,
+                         help="copy password to clipboard instead of printing it\nclear clipboard and return after TIMEOUT (default: {} seconds)".format(DEFAULT_CLIPBOARD_TIMEOUT))
+add_length_option(parser_word)
+add_encoding_option(parser_word)
+add_target_argument(parser_word)
+parser_word.set_defaults(func=passle_word)
+
+
+# add
+add_store_option(parser_add)
+add_verbose_option(parser_add)
+parser_add.add_argument('-k', '--key',
+                         help="if provided, use value as key and TARGET as alias, else TARGET is both")
+add_length_option(parser_add)
+add_encoding_option(parser_add)
+add_target_argument(parser_add)
+parser_add.set_defaults(func=passle_add)
+
+
+# ls
+add_store_option(parser_ls)
+add_verbose_option(parser_ls)
+parser_ls.set_defaults(func=passle_ls)
+
+
+if __name__ == '__main__':
+    if len(sys.argv) <= 1:
+        parser.print_help(sys.stderr)
+        sys.exit(1)
+    args = parser.parse_args()
+    VERBOSITY = args.verbose
+    if VERBOSITY:
+        printinfo("CLI options:", args)
+    args.func(args)
+
 
 
 # Local Variables:
