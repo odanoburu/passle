@@ -2,6 +2,7 @@
 
 import argparse
 import base64
+import configparser
 import getpass
 import hashlib
 import os
@@ -18,8 +19,13 @@ AVAILABLE_ENCODINGS = {"base32": base64.b32encode, "base64": base64.b64encode,
                        "hexadecimal": lambda b: base64.b16encode}
 AVAILABLE_ENCODINGS_AS_STRING = ", ".join(AVAILABLE_ENCODINGS.keys())
 DEFAULT_CLIPBOARD_TIMEOUT = 30
+PASSLE = "PASSLE"
+PASSLE_ENCODING = "encoding"
 PASSLE_ENDIANNESS = 'big'
+PASSLE_EXTENSION = ".pass"
 PASSLE_HOME = "PASSLE_HOME"
+PASSLE_KEY = "key"
+PASSLE_LENGTH = "length"
 PASSLE_SITES_DIRECTORY_NAME = "sites"
 SCRYPT_MAX_LENGTH = 512
 VERBOSITY = None
@@ -67,7 +73,9 @@ def list_site_files(store_dir):
     site_files_dir = os.path.join(store_dir, PASSLE_SITES_DIRECTORY_NAME)
     for root, _, files in os.walk(site_files_dir, topdown=True):
         for f in files:
-            yield (root, f)
+            ext = os.path.splitext(f)[1]
+            if ext == PASSLE_EXTENSION:
+                yield (root, f)
 
 
 def passle_ls(args):
@@ -79,47 +87,41 @@ def passle_ls(args):
 
 def find_site_file(name, store_dir):
     for d, f in list_site_files(store_dir):
-        if f == name:
+        if os.path.splitext(f)[0] == name:
             return os.path.join(d, f)
     raise Exception("Could not find site file for {}".format(name))
 
 
-def parse_site_file(name, store_dir=None):
+def read_site_file(name, store_dir=None):
+    # Site file is an INI-like configuration file as read by Python's
+    # configparser module; it must have a PASSLE section with at least a key
+    # named key and a corresponding value.
     store_dir = store_directory(store_dir)
     path = find_site_file(name, store_dir)
     if VERBOSITY:
         printinfo("Reading site file for {} at {}".format(name, path))
+    config = configparser.ConfigParser()
     with open(path, 'r') as f:
-        key = f.readline().strip()
-        if key:
-            parse_result = {'key': key}
-            for line in map(lambda s: s.strip(), f.readlines()):
-                if line:
-                    if line[0] == "#":
-                        continue
-                    key, value = line.split(sep=':', maxsplit=1)
-                    key = key.rstrip()
-                    value = value.lstrip()
-                    if not parse_result.get(key):
-                        if VERBOSITY:
-                            printinfo("read {} for {}".format(value, key))
-                        parse_result[key] = value
-                    else:
-                        raise Exception("Duplicate key {} for {}".format(key, name))
-            return parse_result
-        else:
-            raise Exception("Key for {} may not empty".format(name))
+        config.read_file(f)
+    read_result = config.has_section(PASSLE) and config[PASSLE]
+    if read_result:
+        if VERBOSITY:
+            printinfo("Read the following configuration:")
+            printinfo(["{}: {}".format(k,v) for k,v in read_result.items()])
+        return read_result
+    else:
+        raise Exception("Configuration must have a section named {}".format(PASSLE))
 
 
 def passle_word(args):
     master = getpass.getpass(prompt="Master passphrase: ")
     if args.as_key:
-        parse_result = {"key": args.target}
+        read_result = {PASSLE_KEY: args.target}
     else:
-        parse_result = parse_site_file(args.target, store_dir=args.store)
-    key = parse_result.get('key')
-    length = args.length or int(parse_result.get('length'))
-    encode_name = args.encoding or parse_result.get('encoding')
+        read_result = read_site_file(args.target, store_dir=args.store)
+    key = read_result.get(PASSLE_KEY)
+    length = args.length or int(read_result.get(PASSLE_LENGTH))
+    encode_name = args.encoding or read_result.get(PASSLE_ENCODING)
     encode = AVAILABLE_ENCODINGS.get(encode_name)
     if not encode:
         raise Exception("Could not find encoding for {}".format(encode_name))
@@ -151,14 +153,25 @@ def validate(p, t, msg):
 
 
 def passle_add(args):
+    name = args.target
     if args.key:
         key = args.key
     else:
-        key = args.target
-    store = store_directory(args.store)
+        key = name
+    store_dir = store_directory(args.store)
     length = args.length or validate(int, input("Password length: "), "Password length must be integer")
     encoding_name = args.encoding or input("Password encoding: ").strip()
     encoding = validate(AVAILABLE_ENCODINGS.get, encoding_name, "Can't read password encoding {}, must be one of: {}".format(encoding_name, AVAILABLE_ENCODINGS_AS_STRING))
+    site_info = {PASSLE_KEY : key,
+                 PASSLE_LENGTH : length,
+                 PASSLE_ENCODING : encoding}
+    config = configparser.ConfigParser()
+    config[PASSLE] = site_info
+    config_fp = os.path.join(store_dir, PASSLE_SITES_DIRECTORY_NAME, name + PASSLE_EXTENSION)
+    with open(config_fp, 'w') as configfile:
+        config.write(configfile)
+    if VERBOSITY:
+        printinfo("Wrote password site information {} to {}".format(site_info, config_fp))
     return None
 
 ##
