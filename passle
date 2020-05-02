@@ -21,6 +21,8 @@ AVAILABLE_ENCODINGS_AS_STRING = ", ".join(AVAILABLE_ENCODINGS.keys())
 DEFAULT_CLIPBOARD_TIMEOUT = 30
 PASSLE = "PASSLE"
 PASSLE_ENCODING = "encoding"
+PASSLE_DEFAULT_ENCODING = "base64"
+PASSLE_DEFAULT_HOME = os.path.join(pathlib.Path.home(), ".passle")
 PASSLE_ENDIANNESS = 'big'
 PASSLE_EXTENSION = ".pass"
 PASSLE_HOME = "PASSLE_HOME"
@@ -38,8 +40,8 @@ def derive_pass(master, key, encode=None, length=None):
     r = 32 # r — block size
     p = 1 # p — paralellization factor
     maxmem = 128 * r * (n + p + 2)
-    length = length or 512
-    encode = encode or base64.b64encode
+    length = length or SCRYPT_MAX_LENGTH
+    encode = encode or AVAILABLE_ENCODINGS[PASSLE_DEFAULT_ENCODING]
     result = hashlib.scrypt(master.encode('utf-8'),
                             salt=key.encode('utf-8'),
                             n=n, r=r, p=p, maxmem=maxmem,
@@ -52,7 +54,7 @@ def derive_pass(master, key, encode=None, length=None):
 
 
 def store_directory(store_directory=None):
-    store_directory = store_directory or os.environ.get(PASSLE_HOME) or os.path.join(pathlib.Path.home(), ".passle")
+    store_directory = store_directory or os.environ.get(PASSLE_HOME) or PASSLE_DEFAULT_HOME
     return valid_store_directory(store_directory)
 
 
@@ -115,12 +117,13 @@ def read_site_file(name, store_dir=None):
 
 def passle_word(args):
     master = getpass.getpass(prompt="Master passphrase: ")
+    length = args.length
     if args.as_key:
         read_result = {PASSLE_KEY: args.target}
     else:
         read_result = read_site_file(args.target, store_dir=args.store)
+        length = length or read_result.getint(PASSLE_LENGTH)
     key = read_result.get(PASSLE_KEY)
-    length = args.length or int(read_result.get(PASSLE_LENGTH))
     encode_name = args.encoding or read_result.get(PASSLE_ENCODING)
     encode = AVAILABLE_ENCODINGS.get(encode_name)
     if not encode:
@@ -196,7 +199,7 @@ parser_add = subparsers.add_parser('add', help="Add new password site")
 
 def add_store_option(parser):
     parser.add_argument('-s', '--store', metavar="STORE_DIR",
-                        help="path to password store directory")
+                        help="path to password store directory (default: {})".format(PASSLE_DEFAULT_HOME))
     return None
 
 
@@ -208,15 +211,16 @@ def add_verbose_option(parser):
 def add_length_option(parser):
     parser.add_argument('-l', '--length', type=int,
                         metavar="PASSWORD_LENGTH",
-                        help="length of password to produce")
+                        help="length of password to produce (default depends on choice of encoding)")
     return None
 
 
 def add_encoding_option(parser):
     parser.add_argument('-e', '--encoding', metavar="ENCODING",
                         choices=AVAILABLE_ENCODINGS.keys(),
-                        help="Password encoding, one of: {}".format(
-                            AVAILABLE_ENCODINGS_AS_STRING))
+                        default=PASSLE_DEFAULT_ENCODING,
+                        help="Password encoding, one of: {} (default: {})".format(
+                            AVAILABLE_ENCODINGS_AS_STRING, PASSLE_DEFAULT_ENCODING))
     return None
 
 
@@ -232,7 +236,8 @@ parser_word.add_argument('-k', '--as-key', action='store_true',
                          help="treat TARGET as key, not as a site name")
 parser_word.add_argument('-c', '--clip', nargs='?', type=int, metavar="TIMEOUT",
                          const=DEFAULT_CLIPBOARD_TIMEOUT,
-                         help="copy password to clipboard instead of printing it\nclear clipboard and return after TIMEOUT (default: {} seconds)".format(DEFAULT_CLIPBOARD_TIMEOUT))
+                         help="""Copy password to clipboard instead of printing it.
+Clear clipboard and return after TIMEOUT (default: {} seconds)""".format(DEFAULT_CLIPBOARD_TIMEOUT))
 add_length_option(parser_word)
 add_encoding_option(parser_word)
 add_target_argument(parser_word)
