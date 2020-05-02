@@ -118,12 +118,12 @@ A way an attacker could obtain a derived password is by getting it
 from the clipboard (if you asked it to be copied there). As far as I
 know there is no way to prevent this by patching =passle=, and it is
 too convenient a feature to not provide, so we add a timeout until the
-clipboard is cleared and we live it 🤷 I'd love to hear if you know of
-a better way of handling this! I don't know how standard password
-managers handle this, but this vulnerability is shared by =pass= (see
-[[*Similar software]]), but not by in-browser password managers (these are
-subject to other types of vulnerabilites like fake password forms when
-autofill is enabled).
+clipboard is cleared and we live with it 🤷 I'd love to hear if you
+know of a better way of handling this! I don't know how standard
+password managers handle this, but this vulnerability is shared by
+=pass= (see [[*Similar software]]), but not by in-browser password
+managers (these are subject to other types of vulnerabilites like fake
+password forms when autofill is enabled).
 
 See [[https://security.stackexchange.com/questions/230703/how-secure-is-this-hash-based-personal-password-scheme][this question]] ([[https://web.archive.org/web/20200430202250/https://security.stackexchange.com/questions/230703/how-secure-is-this-hash-based-personal-password-scheme][archive]]) at the security stack exchange for
 contrary opinions (not so much about security being bad but more about
