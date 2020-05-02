@@ -1,0 +1,16 @@
+- tests
+- salt?
+  - the key already works as a salt, but it's somewhat predictable, so
+    an attacker could try and make tables that would work for
+    everyone's passwords; adding a random salt for each user defeats
+    this (making personal tables necessary), but reduces hassle's
+    portability (you have to hold on to your sites directory, which is
+    not true if you use simple keys)
+- subcommands:
+  - add
+  - list
+  - info
+
+# Local Variables:
+# mode: org
+# End:

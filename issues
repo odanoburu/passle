@@ -1,0 +1,8 @@
+- better performance when finding site file (indices? probably not
+  worth the hassle)
+- more platforms
+- secure clipboard clearing (unsolvable at this level, I'm afraid)
+
+# Local Variables:
+# mode: org
+# End:
